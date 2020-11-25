@@ -1,23 +1,61 @@
 ---
-# Deployment of our keptn-service-template-go
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keptn-monaco-service
+  namespace: keptn
+  labels:
+    "app": "keptn"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: keptn-monaco-service
+  namespace: keptn
+  labels:
+    "app": "keptn"
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: keptn-monaco-service
+  namespace: keptn
+  labels:
+    "app": "keptn"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: keptn-monaco-service
+subjects:
+  - kind: ServiceAccount
+    name: keptn-monaco-service
+---
+# Deployment of our monaco-service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: keptn-service-template-go
+  name: monaco-service
   namespace: keptn
 spec:
   selector:
     matchLabels:
-      run: keptn-service-template-go
+      run: monaco-service
   replicas: 1
   template:
     metadata:
       labels:
-        run: keptn-service-template-go
+        run: monaco-service
     spec:
       containers:
-        - name: keptn-service-template-go
-          image: keptnsandbox/keptn-service-template-go:latest # Todo: Replace this with your image name
+        - name: monaco-service
+          image: kristofre/monaco-service:latest # Todo: Replace this with your image name
           ports:
             - containerPort: 8080
           env:
@@ -50,20 +88,20 @@ spec:
               value: 'sh.keptn.>'
             - name: PUBSUB_RECIPIENT
               value: '127.0.0.1'
-      serviceAccountName: keptn-default
+      serviceAccountName: keptn-monaco-service
 ---
-# Expose keptn-service-template-go via Port 8080 within the cluster
+# Expose monaco-service via Port 8080 within the cluster
 apiVersion: v1
 kind: Service
 metadata:
-  name: keptn-service-template-go
+  name: monaco-service
   namespace: keptn
   labels:
-    run: keptn-service-template-go
+    run: monaco-service
 spec:
   ports:
     - port: 8080
       protocol: TCP
   selector:
-    run: keptn-service-template-go
+    run: monaco-service
 

@@ -1,10 +1,17 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"log"
+	"strings"
 
 	"github.com/cloudevents/sdk-go/pkg/cloudevents"
 	keptn "github.com/keptn/go-utils/pkg/lib"
+	keptnlib "github.com/keptn/go-utils/pkg/lib"
+	keptnlog "github.com/keptn/go-utils/pkg/lib/keptn"
+
+	"github.com/kristofre/monaco-service/pkg/common"
 )
 
 /**
@@ -33,7 +40,62 @@ func HandleConfigureMonitoringEvent(myKeptn *keptn.Keptn, incomingEvent cloudeve
 // TODO: add in your handler code
 //
 func HandleConfigurationChangeEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Event, data *keptn.ConfigurationChangeEventData) error {
-	log.Printf("Handling Configuration Changed Event: %s", incomingEvent.Context.GetID())
+	var shkeptncontext string
+	incomingEvent.Context.ExtensionAs("shkeptncontext", &shkeptncontext)
+
+	stdLogger := keptnlog.NewLogger(shkeptncontext, incomingEvent.Context.GetID(), "monaco-service")
+	stdLogger.Info(fmt.Sprintf("Handling Configuration Changed Event: %s", incomingEvent.Context.GetID()))
+	stdLogger.Info(fmt.Sprintf("Processing sh.keptn.event.configuration.change for %s.%s.%s", data.Project, data.Stage, data.Service))
+
+	keptnEvent := &common.BaseKeptnEvent{}
+	keptnEvent.Project = data.Project
+	keptnEvent.Stage = data.Stage
+	keptnEvent.Service = data.Service
+	keptnEvent.Labels = data.Labels
+	keptnEvent.Context = shkeptncontext
+
+	monacoConfigFile, _ := common.GetMonacoConfig(keptnEvent, stdLogger)
+	dtCreds := ""
+	if monacoConfigFile != nil {
+		// implementing https://github.com/keptn-contrib/dynatrace-sli-service/issues/90
+		dtCreds = common.ReplaceKeptnPlaceholders(monacoConfigFile.DtCreds, keptnEvent)
+		stdLogger.Debug("Found monaco.conf.yaml with DTCreds: " + dtCreds)
+	} else {
+		stdLogger.Debug("Using default DTCreds: dynatrace as no custom monaco.conf.yaml was found!")
+		monacoConfigFile = &common.MonacoConfigFile{}
+		monacoConfigFile.DtCreds = "dynatrace"
+	}
+
+	//
+	// Adding DtCreds as a label so users know which DtCreds was used
+	if data.Labels == nil {
+		data.Labels = make(map[string]string)
+	}
+	data.Labels["DtCreds"] = monacoConfigFile.DtCreds
+
+	dtCredentials, err := getDynatraceCredentials(dtCreds, data.Project, stdLogger)
+
+	if err != nil {
+		stdLogger.Error("Failed to fetch Dynatrace credentials: " + err.Error())
+		return err
+	}
+
+	// Prepare the folder structure for monaco (create base + shkeptncontext temp folder, copy files, get monaco.zip, extract and copy to temp)
+	err = common.PrepareFiles(keptnEvent, keptnEvent.Context, stdLogger)
+	if err != nil {
+		stdLogger.Error(fmt.Sprintf("Error preparing monaco files: %s", err.Error()))
+		return err
+	}
+
+	// generate projects string for monaco
+	monacoProjects := common.GenerateMonacoProjectStringFromMonacoConfig(monacoConfigFile, keptnEvent)
+
+	// test and apply monaco configuration
+	err = callMonaco(dtCredentials, keptnEvent.Context, data, monacoProjects, stdLogger)
+
+	// Clean up: remove temp folder for Context
+	err = common.DeleteTempFolderForKeptnContext(keptnEvent.Context)
+	stdLogger.Info(fmt.Sprintf("Delete temp folder for %s", keptnEvent.Context))
 
 	return nil
 }
@@ -43,16 +105,7 @@ func HandleConfigurationChangeEvent(myKeptn *keptn.Keptn, incomingEvent cloudeve
 // TODO: add in your handler code
 //
 func HandleDeploymentFinishedEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Event, data *keptn.DeploymentFinishedEventData) error {
-	log.Printf("Handling Deployment Finished Event: %s", incomingEvent.Context.GetID())
-
-	// capture start time for tests
-	// startTime := time.Now()
-
-	// run tests
-	// ToDo: Implement your tests here
-
-	// Send Test Finished Event
-	// return myKeptn.SendTestsFinishedEvent(&incomingEvent, "", "", startTime, "pass", nil, "keptn-service-template-go")
+	//log.Printf("Handling Deployment Finished Event: %s", incomingEvent.Context.GetID())
 	return nil
 }
 
@@ -61,7 +114,7 @@ func HandleDeploymentFinishedEvent(myKeptn *keptn.Keptn, incomingEvent cloudeven
 // TODO: add in your handler code
 //
 func HandleTestsFinishedEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Event, data *keptn.TestsFinishedEventData) error {
-	log.Printf("Handling Tests Finished Event: %s", incomingEvent.Context.GetID())
+	//log.Printf("Handling Tests Finished Event: %s", incomingEvent.Context.GetID())
 
 	return nil
 }
@@ -71,7 +124,7 @@ func HandleTestsFinishedEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Ev
 // TODO: add in your handler code
 //
 func HandleStartEvaluationEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Event, data *keptn.StartEvaluationEventData) error {
-	log.Printf("Handling Start Evaluation Event: %s", incomingEvent.Context.GetID())
+	//log.Printf("Handling Start Evaluation Event: %s", incomingEvent.Context.GetID())
 
 	return nil
 }
@@ -81,7 +134,7 @@ func HandleStartEvaluationEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.
 // TODO: add in your handler code
 //
 func HandleEvaluationDoneEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Event, data *keptn.EvaluationDoneEventData) error {
-	log.Printf("Handling Evaluation Done Event: %s", incomingEvent.Context.GetID())
+	//log.Printf("Handling Evaluation Done Event: %s", incomingEvent.Context.GetID())
 
 	return nil
 }
@@ -91,48 +144,6 @@ func HandleEvaluationDoneEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.E
 // TODO: add in your handler code
 //
 func HandleInternalGetSLIEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Event, data *keptn.InternalGetSLIEventData) error {
-	log.Printf("Handling Internal Get SLI Event: %s", incomingEvent.Context.GetID())
-
-	incomingGetSLIEventData := &keptn.InternalGetSLIEventData{}
-	incomingEvent.DataAs(incomingGetSLIEventData)
-
-	// Step 1 - Do we need to do something?
-	// Lets make sure we are only processing an event that really belongs to our SLI Provider
-	/* if incomingGetSLIEventData.SLIProvider != "keptn-service-template-go" {
-		return nil
-	}*/
-
-	// Step 2 - prep-work
-	// Get any additional input / configuration data, e.g
-	// Labels: get the incoming labels for potential config data and use it to pass more labels on result, e.g: links
-	// SLI.yaml: if your service uses SLI.yaml to store query definitions for SLIs get that file from Keptn
-	/* labels := incomingGetSLIEventData.Labels
-	if labels == nil {
-		labels = make(map[string]string)
-	}
-	testRunID := labels["testRunId"]*/
-
-	// sliConfigFileContent, err := myKeptn.GetKeptnResource("keptn-service-template-go/sli.yaml")
-
-	// Step 3 - do your work - iterate through the list of requested indicators and return their values
-	// Indicators: this is the list of indicators as requested in the SLO.yaml
-	// SLIResult: this is the array that will receive the results
-	/* indicators := incomingGetSLIEventData.Indicators
-	sliResults := []*keptn.SLIResult{}
-
-	for _, indicatorName := range indicators {
-		sliResult := &keptn.SLIResult{
-			Metric: indicatorName,
-			Value:  123.4,
-		}
-		sliResults = append(sliResults, sliResult)
-	}*/
-
-	// Step 4 - add additional context via labels
-	// labels["Link to Data Source"] = "https://mydatasource/myquery?testRun=" + testRunID
-
-	// Step 4 - send results back to Keptn
-	// return myKeptn.SendInternalGetSLIDoneEvent(incomingGetSLIEventData, sliResults, labels, err, "keptn-service-template-go")
 
 	return nil
 }
@@ -143,10 +154,8 @@ func HandleInternalGetSLIEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.E
 // TODO: add in your handler code
 //
 func HandleProblemEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Event, data *keptn.ProblemEventData) error {
-	log.Printf("Handling Problem Event: %s", incomingEvent.Context.GetID())
-
+	//log.Printf("Handling Problem Event: %s", incomingEvent.Context.GetID())
 	// Deprecated since Keptn 0.7.0 - use the HandleActionTriggeredEvent instead
-
 	return nil
 }
 
@@ -155,15 +164,44 @@ func HandleProblemEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Event, d
 // TODO: add in your handler code
 //
 func HandleActionTriggeredEvent(myKeptn *keptn.Keptn, incomingEvent cloudevents.Event, data *keptn.ActionTriggeredEventData) error {
-	log.Printf("Handling Action Triggered Event: %s", incomingEvent.Context.GetID())
-
-	// check if action is supported
-	if data.Action.Action == "action-xyz" {
-		//myKeptn.SendActionStartedEvent()
-
-		// Implement your remediation action here
-
-		//myKeptn.SendActionFinishedEvent()
-	}
+	//log.Printf("Handling Action Triggered Event: %s", incomingEvent.Context.GetID())
 	return nil
+}
+
+func getDynatraceCredentials(secretName string, project string, logger *keptnlog.Logger) (*common.DTCredentials, error) {
+
+	secretNames := []string{secretName, fmt.Sprintf("dynatrace-credentials-%s", project), "dynatrace-credentials", "dynatrace"}
+
+	for _, secret := range secretNames {
+		if secret == "" {
+			continue
+		}
+
+		dtCredentials, err := common.GetDTCredentials(secret)
+
+		if err != nil {
+			logger.Error(fmt.Sprintf("Error retrieving secret '%s': %v", secret, err))
+		}
+
+		if err == nil && dtCredentials != nil {
+			// lets validate if the tenant URL is
+			logger.Info(fmt.Sprintf("Secret '%s' with credentials found, returning (%s) ...", secret, dtCredentials.Tenant))
+			return dtCredentials, nil
+		}
+	}
+
+	return nil, errors.New("Could not find any Dynatrace specific secrets with the following names: " + strings.Join(secretNames, ","))
+}
+
+func callMonaco(dtCredentials *common.DTCredentials, keptnContext string, keptnEvent *keptnlib.ConfigurationChangeEventData, projects string, logger *keptnlog.Logger) error {
+	// Dry Run to test configuration structure
+	err := common.ExecuteMonaco(dtCredentials, keptnContext, keptnEvent, projects, true, true)
+	if err != nil {
+		return err
+	}
+
+	// Apply configuration
+	err = common.ExecuteMonaco(dtCredentials, keptnContext, keptnEvent, projects, true, false)
+
+	return err
 }

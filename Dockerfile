@@ -5,7 +5,7 @@ FROM golang:1.13.7-alpine as builder
 
 RUN apk add --no-cache gcc libc-dev git
 
-WORKDIR /src/keptn-service-template-go
+WORKDIR /src/monaco-service
 
 ARG version=develop
 ENV VERSION="${version}"
@@ -32,13 +32,13 @@ COPY . .
 
 # Build the command inside the container.
 # (You may fetch or manage dependencies here, either manually or with a tool like "godep".)
-RUN GOOS=linux go build -ldflags '-linkmode=external' $BUILDFLAGS -v -o keptn-service-template-go
+RUN GOOS=linux go build -ldflags '-linkmode=external' $BUILDFLAGS -v -o monaco-service
 
 # Use a Docker multi-stage build to create a lean production image.
 # https://docs.docker.com/develop/develop-images/multistage-build/#use-multi-stage-builds
 FROM alpine:3.11
 ENV ENV=production
-
+ARG monaco_version=v1.0.1
 # Install extra packages
 # See https://github.com/gliderlabs/docker-alpine/issues/136#issuecomment-272703023
 
@@ -47,11 +47,18 @@ RUN    apk update && apk upgrade \
 	&& update-ca-certificates \
 	&& rm -rf /var/cache/apk/*
 
+RUN wget -O monaco "https://github.com/dynatrace-oss/dynatrace-monitoring-as-code/releases/download/${monaco_version}/monaco-linux-amd64"
+RUN chmod +x monaco
+
 ARG version=develop
 ENV VERSION="${version}"
 
 # Copy the binary to the production image from the builder stage.
-COPY --from=builder /src/keptn-service-template-go/keptn-service-template-go /keptn-service-template-go
+COPY --from=builder /src/monaco-service/monaco-service /monaco-service
+
+ADD dynatrace /dynatrace
+ADD monaco /monaco-test
+ADD monaco/environments.yaml /environments.yaml
 
 EXPOSE 8080
 
@@ -64,4 +71,4 @@ ENV GOTRACEBACK=all
 #travis-uncomment ENTRYPOINT ["/entrypoint.sh"]
 
 # Run the web service on container startup.
-CMD ["/keptn-service-template-go"]
+CMD ["/monaco-service"]
