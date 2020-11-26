@@ -467,11 +467,8 @@ func PrepareFiles(keptnEvent *BaseKeptnEvent, shkeptncontext string, logger *kep
 
 func GenerateMonacoProjectStringFromMonacoConfig(monacoConfigFile *MonacoConfigFile, keptnEvent *BaseKeptnEvent) string {
 	monacoProjectFromConfig := monacoConfigFile.Projects
-	fmt.Sprintf("Specific projects: %s", monacoProjectFromConfig)
-	fmt.Sprintf("Project count: %d", len(monacoProjectFromConfig))
 	monacoProjectString := ""
 	if len(monacoProjectFromConfig) == 0 {
-		fmt.Sprintln("No monaco project defined, defaulting to Keptn Project name %s", keptnEvent.Project)
 		monacoProjectString = keptnEvent.Project
 	} else {
 		for i, s := range monacoProjectFromConfig {
@@ -481,7 +478,6 @@ func GenerateMonacoProjectStringFromMonacoConfig(monacoConfigFile *MonacoConfigF
 			}
 		}
 	}
-	fmt.Sprintln("Monaco Project String: %s", monacoProjectString)
 	return monacoProjectString
 }
 
